@@ -21,6 +21,10 @@ class ReberDataType(Enum):
     def get_class_label(self):
         return 1 if self == self.VALID else 0
 
+    @classmethod
+    def values(cls):
+        return {e.value for e in cls}
+
 
 class ReberMetadata:
     # TODO: rename this?:
@@ -36,11 +40,14 @@ class ReberMetadata:
             datatype_to_percentage = {
                 ReberDataType.VALID.value: 50,
                 ReberDataType.PERTURBED.value: 5,
-                ReberDataType.SYMMETRY_DISTURBED.value: 20,
-                ReberDataType.RANDOM.value: 25,
+                ReberDataType.SYMMETRY_DISTURBED.value: 40,
+                ReberDataType.RANDOM.value: 5,
             }
-        if sum(datatype_to_percentage.values()) != 100:
-            raise ArithmeticError("Percentages must add up to exactly 100")
+        percentage_sum = sum(datatype_to_percentage.values())
+        if percentage_sum != 100:
+            raise ArithmeticError(
+                f"Percentages must add up to exactly 100; was {percentage_sum}"
+            )
         for datatype in ReberDataType:
             value = datatype.value
             if value not in datatype_to_percentage:
@@ -211,9 +218,7 @@ class ReberGenerator:
     def _encode_as_unpadded_ints(self, string):
         return [self._reber_letter_shifted_idx[char] for char in string]
 
-    def make_data(
-        self, total_num_rows=10, **datatype_to_percentage,
-    ) -> Tuple[pd.DataFrame, pd.Series]:
+    def make_data(self, total_num_rows=10, **kwargs,) -> Tuple[pd.DataFrame, pd.Series]:
         """
         # TODO: to motivate the max_length thing, describe the distribution of the strings, explain how it drops off, show a graph, say how you didn't want useless data
         # TODO: should I include random reber too?
@@ -225,6 +230,9 @@ class ReberGenerator:
             of the corresponding labels for each row in X where 1 means that the string
             matches the reber grammar
         """
+        datatype_to_percentage = {
+            k: v for k, v in kwargs if k in ReberDataType.values()
+        }
         metadata = ReberMetadata(**datatype_to_percentage)
         datatypes_to_row_counts = metadata.get_datatype_to_row_count(total_num_rows)
         X_raw = []
@@ -265,5 +273,5 @@ class ReberGenerator:
 
 if __name__ == "__main__":
     reber = ReberGenerator(max_length=15)
-    X, y = reber.make_data(total_num_rows=100)
+    X, y = reber.make_data(total_num_rows=1000)
     print(X.head())
