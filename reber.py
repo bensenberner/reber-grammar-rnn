@@ -2,10 +2,69 @@
 # TODO: find better labelling, make it clear to a reader which node means what
 from collections import namedtuple
 import random
+from enum import Enum
+
 import pandas as pd
 from typing import List, Tuple
 
 Edge = namedtuple("Edge", ["to", "get_str_list"])
+
+
+class ReberDataType(Enum):
+    VALID = "valid"  # valid embedded reber string
+    PERTURBED = "perturbed"  # embedded reber string with some number of random in-place edits that render it invalid
+    SYMMETRY_DISTURBED = "symmetry_disturbed"  # embedded reber string in which either the second or second to last index is modified to render it invalid
+    RANDOM = (
+        "random"  # string that consists of the reber alphabet but arranged randomly
+    )
+
+    def get_class_label(self):
+        return 1 if self == self.VALID else 0
+
+
+class ReberMetadata:
+    # TODO: rename this?:
+    def __init__(self, **datatype_to_percentage):
+        """
+        :param datatype_to_percentage:
+            valid: percentage of rows that follow embedded reber grammar
+            perturbed: percentage of rows that have `self.num_perturbations` in-place edits corrupting an embedded reber
+            symmetry_disturbed: percentage of rows in which the symmetry of the second and second to last indexes of a reber string is violated
+            random: percentage of rows consisting of strings whose characters were randomly sampled from `self._reber_letters`
+        """
+        if not datatype_to_percentage:
+            datatype_to_percentage = {
+                ReberDataType.VALID.value: 50,
+                ReberDataType.PERTURBED.value: 5,
+                ReberDataType.SYMMETRY_DISTURBED.value: 20,
+                ReberDataType.RANDOM.value: 25,
+            }
+        if sum(datatype_to_percentage.values()) != 100:
+            raise ArithmeticError("Percentages must add up to exactly 100")
+        for datatype in ReberDataType:
+            value = datatype.value
+            if value not in datatype_to_percentage:
+                raise ValueError(f"Missing {value} percentage.")
+        self.datatype_to_percentage = datatype_to_percentage
+
+    def get_datatype_to_row_count(self, total_num_rows):
+        all_percentage_types_but_valid = {
+            percentage_type
+            for percentage_type in ReberDataType
+            if percentage_type != ReberDataType.VALID
+        }
+        remaining_rows = total_num_rows
+        row_counts = {}
+        for percentage_type in all_percentage_types_but_valid:
+            percentage = self.datatype_to_percentage[percentage_type.value]
+            num_rows_of_this_type = round(total_num_rows * percentage / 100)
+            row_counts[percentage_type.value] = num_rows_of_this_type
+            remaining_rows -= num_rows_of_this_type
+        num_valid_rows = remaining_rows
+        row_counts[ReberDataType.VALID.value] = num_valid_rows
+
+        assert total_num_rows == sum(row_counts.values())
+        return row_counts
 
 
 class ReberGenerator:
@@ -29,6 +88,15 @@ class ReberGenerator:
     def __init__(self, max_length: int = 25, num_perturbations: int = 1):
         self.max_length = max_length
         self.num_perturbations = num_perturbations
+        self._datatype_to_string_making_fn = {  # TODO: is this the best place for it?
+            ReberDataType.VALID.value: self.make_embedded_reber_string,
+            ReberDataType.PERTURBED.value: self.make_perturbed_embedded_reber_string,
+            ReberDataType.SYMMETRY_DISTURBED.value: self._make_symmetry_disturbed_reber_string,
+            ReberDataType.RANDOM.value: self.make_random,
+        }
+        assert set(self._datatype_to_string_making_fn.keys()) == set(
+            d.value for d in ReberDataType
+        )
         self._reber_graph = {
             0: [Edge(to=1, get_str_list=lambda: ["B"])],
             1: [
@@ -144,79 +212,41 @@ class ReberGenerator:
         return [self._reber_letter_shifted_idx[char] for char in string]
 
     def make_data(
-        self,
-        num_rows=10,
-        valid_percentage=50,
-        perturbed_percentage=5,
-        symmetry_disturbed_percentage=20,
-        random_percentage=25,
+        self, total_num_rows=10, **datatype_to_percentage,
     ) -> Tuple[pd.DataFrame, pd.Series]:
         """
         # TODO: to motivate the max_length thing, describe the distribution of the strings, explain how it drops off, show a graph, say how you didn't want useless data
         # TODO: should I include random reber too?
         # TODO: make this max length some aspect of the embedder
-        :param num_rows: total number of rows to generate
-        :param valid_percentage: percentage of rows that follow embedded reber grammar
-        :param perturbed_percentage: percentage of rows that have `self.num_perturbations` in-place edits corrupting an embedded reber
-        :param symmetry_disturbed_percentage: percentage of rows in which the symmetry of the second and second to last indexes of a reber string is violated
-        :param random_percentage: percentage of rows consisting of strings whose characters were randomly sampled from `self._reber_letters`
+        :param total_num_rows: total number of rows to generate
         :return: X, y where X is a (num_rows, self.max_length) matrix of strings
             encoded as lists of ints, each int representing the index of a character in
             `self._reber_letters`, padded with 0s at the end of each row; y is a vector
             of the corresponding labels for each row in X where 1 means that the string
             matches the reber grammar
         """
-        if (
-            sum(
+        metadata = ReberMetadata(**datatype_to_percentage)
+        datatypes_to_row_counts = metadata.get_datatype_to_row_count(total_num_rows)
+        X_raw = []
+        y_raw = []
+        for datatype_enum in ReberDataType:
+            datatype = datatype_enum.value
+            string_making_fn = self._datatype_to_string_making_fn[datatype]
+            num_rows_to_make = datatypes_to_row_counts[datatype]
+            X_raw.extend(
                 [
-                    valid_percentage,
-                    perturbed_percentage,
-                    symmetry_disturbed_percentage,
-                    random_percentage,
+                    self._encode_as_unpadded_ints(string_making_fn())
+                    for _ in range(num_rows_to_make)
                 ]
             )
-            != 100
-        ):
-            raise ArithmeticError("Percentages must add up to 100.")
-        num_perturbed_rows = round(num_rows * perturbed_percentage / 100)
-        num_random_rows = round(num_rows * random_percentage / 100)
-        num_symmetry_disturbed_rows = round(
-            num_rows * symmetry_disturbed_percentage / 100
-        )
-        num_valid_rows = num_rows - (
-            num_perturbed_rows + num_symmetry_disturbed_rows + num_random_rows
-        )
-
+            class_label = datatype_enum.get_class_label()
+            y_raw.extend([class_label] * num_rows_to_make)
         X = (
-            pd.DataFrame(
-                [
-                    self._encode_as_unpadded_ints(self.make_embedded_reber_string())
-                    for _ in range(num_valid_rows)
-                ]
-                + [
-                    self._encode_as_unpadded_ints(
-                        self.make_perturbed_embedded_reber_string()
-                    )
-                    for _ in range(num_perturbed_rows)
-                ]
-                + [
-                    self._encode_as_unpadded_ints(
-                        self._make_symmetry_disturbed_reber_string()
-                    )
-                    for _ in range(num_symmetry_disturbed_rows)
-                ]
-                + [
-                    self._encode_as_unpadded_ints(self.make_random())
-                    for _ in range(num_random_rows)
-                ]
-            )
+            pd.DataFrame(X_raw)
             .fillna(value=0)  # 0 is a dummy encoding for padding
             .astype("int64")
         )
-        y = pd.Series(
-            [1] * num_valid_rows
-            + [0] * (num_perturbed_rows + num_symmetry_disturbed_rows + num_random_rows)
-        )
+        y = pd.Series(y_raw)
         if X.shape[1] != self.max_length:
             raise AssertionError(
                 "No strings were generated that reached max_length. "
@@ -235,5 +265,5 @@ class ReberGenerator:
 
 if __name__ == "__main__":
     reber = ReberGenerator(max_length=15)
-    X, y = reber.make_data(num_rows=100)
+    X, y = reber.make_data(total_num_rows=100)
     print(X.head())
