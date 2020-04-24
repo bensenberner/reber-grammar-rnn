@@ -235,7 +235,7 @@ class ReberGenerator:
              matches the reber grammar
         """
         datatype_to_percentage = {
-            k: v for k, v in kwargs if k in ReberDataType.values()
+            k: v for k, v in kwargs.items() if k in ReberDataType.values()
         }
         metadata = ReberMetadata(**datatype_to_percentage)
         datatype_to_row_count = metadata.get_datatype_to_row_count(m_total)
