@@ -5,7 +5,7 @@ import random
 from enum import Enum
 
 import pandas as pd
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Callable
 
 Edge = namedtuple("Edge", ["to", "get_str_list"])
 
@@ -78,8 +78,9 @@ class ReberMetadata:
 
 
 class ReberGenerator:
-    _reber_start_node_idx = _embed_reber_start_node_idx = 0
-    _reber_end_node_idx = _embed_reber_end_node_idx = 7
+    # start and end idxes are the same in both graphs for convenience
+    _reber_start_node_idx = 0
+    _reber_end_node_idx = 7
     _reber_letters = "BEPSTVX"
     _reber_letter_shifted_idx = {  # shifted so that 0 will represent a padding token
         char: idx + 1 for idx, char in enumerate(_reber_letters)
@@ -107,13 +108,13 @@ class ReberGenerator:
         """
         self.max_length = max_length
         self.num_perturbations = num_perturbations
-        self._datatype_to_string_making_fn = {
+        self._datatype_to_make_str_fn = {
             ReberDataType.VALID.value: self.make_valid_embedded_reber_string,
             ReberDataType.PERTURBED.value: self.make_perturbed_embedded_reber_string,
             ReberDataType.SYMMETRY_DISTURBED.value: self.make_symmetry_disturbed_reber_string,
             ReberDataType.RANDOM.value: self.make_random,
         }
-        assert set(self._datatype_to_string_making_fn.keys()) == set(
+        assert set(self._datatype_to_make_str_fn.keys()) == set(
             d.value for d in ReberDataType
         )
         self._reber_graph = {
@@ -155,21 +156,12 @@ class ReberGenerator:
 
     def _make_reber_str_list(self, is_embedded) -> List[str]:
         """
-        Generates a list of chars that represent a reber string or an embedded reber string
+        :return list of chars that represent a reber string or an embedded reber string
         """
         graph = self._embedded_reber_graph if is_embedded else self._reber_graph
-        start_idx = (
-            self._embed_reber_start_node_idx
-            if is_embedded
-            else self._reber_start_node_idx
-        )
-        end_idx = (
-            self._embed_reber_end_node_idx if is_embedded else self._reber_end_node_idx
-        )
-
-        curr_node_idx = start_idx
+        curr_node_idx = self._reber_start_node_idx
         str_list = []
-        while curr_node_idx != end_idx:
+        while curr_node_idx != self._reber_end_node_idx:
             edge = random.choice(graph[curr_node_idx])
             str_list.extend(edge.get_str_list())
             curr_node_idx = edge.to
@@ -232,12 +224,12 @@ class ReberGenerator:
     def _encode_as_unpadded_ints(self, string) -> List[int]:
         return [self._reber_letter_shifted_idx[char] for char in string]
 
-    def make_data(self, total_num_rows=10, **kwargs,) -> Tuple[pd.DataFrame, pd.Series]:
+    def make_data(self, m_total=10, **kwargs) -> Tuple[pd.DataFrame, pd.Series]:
         """
         # TODO: to motivate the max_length thing, describe the distribution of the strings, explain how it drops off, show a graph, say how you didn't want useless data
         # TODO: should I include random reber too?
         # TODO: make this max length some aspect of the embedder
-        :param total_num_rows: total number of rows to generate
+        :param m_total: total number of rows to generate
         :return: X, y where X is a (num_rows, self.max_length) matrix of strings encoded as lists of ints,
              each int representing the index of a character in `self._reber_letters`, padded with 0s at
              the end of each row
@@ -248,31 +240,23 @@ class ReberGenerator:
             k: v for k, v in kwargs if k in ReberDataType.values()
         }
         metadata = ReberMetadata(**datatype_to_percentage)
-        datatypes_to_row_counts = metadata.get_datatype_to_row_count(total_num_rows)
+        datatype_to_row_count = metadata.get_datatype_to_row_count(m_total)
         X_raw = []
         y_raw = []
         for datatype_enum in ReberDataType:
             datatype = datatype_enum.value
-            string_making_fn = self._datatype_to_string_making_fn[datatype]
-            num_rows_to_make = datatypes_to_row_counts[datatype]
-            X_raw.extend(
-                [
-                    self._encode_as_unpadded_ints(string_making_fn())
-                    for _ in range(num_rows_to_make)
-                ]
-            )
+            make_str: Callable = self._datatype_to_make_str_fn[datatype]
+            m = datatype_to_row_count[datatype]
+            X_raw.extend([self._encode_as_unpadded_ints(make_str()) for _ in range(m)])
             class_label = datatype_enum.get_class_label()
-            y_raw.extend([class_label] * num_rows_to_make)
-        X = (
-            pd.DataFrame(X_raw)
-            .fillna(value=0)  # 0 is a dummy encoding for padding
-            .astype("int64")
-        )
+            y_raw.extend([class_label] * m)
+        # 0 is a dummy encoding for padding
+        X = pd.DataFrame(X_raw).fillna(value=0).astype("int64")
         y = pd.Series(y_raw)
         if X.shape[1] != self.max_length:
             raise AssertionError(
                 "No strings were generated that reached max_length. "
-                "Try setting a higher num_rows or a lower max_length"
+                "Try setting a higher m_total or a lower max_length"
             )
         assert X.shape[0] == len(y)
         return X, y
@@ -299,5 +283,5 @@ class ReberGenerator:
 
 if __name__ == "__main__":
     reber = ReberGenerator(max_length=20)
-    X, y = reber.make_data(total_num_rows=1000)
+    X, y = reber.make_data(m_total=1000)
     print(X.head())
