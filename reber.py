@@ -8,6 +8,7 @@ import pandas as pd
 from typing import List, Tuple, Dict, Callable
 
 Edge = namedtuple("Edge", ["to", "get_str_list"])
+PADDING_VALUE = 0
 
 
 class ReberDataType(Enum):
@@ -20,26 +21,26 @@ class ReberDataType(Enum):
         # all we care about is valid or invalid reber. All other classes are invalid, just in different ways
         return 1 if self == self.VALID else 0
 
-    @classmethod
-    def values(cls):
-        return {e.value for e in cls}
 
-
-class ReberMetadata:
-    def __init__(self, **datatype_to_percentage):
-        """
-        :param datatype_to_percentage: keys consist of the values of ReberDataType, values are integer percentage points
-            representing what proportion of data generated will be of which datatype. See ReberDataType for type details
-        """
+class ReberDatatypeToPercentage:
+    def __init__(self, datatype_to_percentage=None):
         if not datatype_to_percentage:
             datatype_to_percentage = {
-                ReberDataType.VALID.value: 50,
-                ReberDataType.PERTURBED.value: 5,
-                ReberDataType.SYMMETRY_DISTURBED.value: 40,  # these are the hardest to recognize
-                ReberDataType.RANDOM.value: 5,
+                ReberDataType.VALID: 50,
+                ReberDataType.PERTURBED: 5,
+                ReberDataType.SYMMETRY_DISTURBED: 40,  # these are the hardest to recognize
+                ReberDataType.RANDOM: 5,
             }
         self._validate_datatype_to_percentage(datatype_to_percentage)
-        self._datatype_to_percentage = datatype_to_percentage
+        self._map = datatype_to_percentage
+
+    @classmethod
+    def from_kwargs(cls, **kwargs):
+        datatype_to_percentage = {ReberDataType(k): v for k, v in kwargs.items()}
+        return cls(datatype_to_percentage)
+
+    def get(self, datatype: ReberDataType):
+        return self._map.get(datatype)
 
     @staticmethod
     def _validate_datatype_to_percentage(datatype_to_percentage):
@@ -54,32 +55,47 @@ class ReberMetadata:
         if negative_percentage_exists:
             raise ArithmeticError("A negative percentage doesn't make sense")
         for datatype in ReberDataType:
-            value = datatype.value
-            if value not in datatype_to_percentage:
-                raise ValueError(f"Missing {value} percentage.")
+            if datatype not in datatype_to_percentage:
+                raise ValueError(f"Missing {datatype} percentage.")
 
-    def get_datatype_to_row_count(self, total_num_rows: int) -> Dict[str, int]:
+
+class ReberMetadata:
+    def __init__(self, m_total: int, datatype_to_percentage: ReberDatatypeToPercentage):
         """
-        :param total_num_rows: total number of rows to be generated
-        :return: a map of {ReberDataType.value: number_of_rows_for_that_type}
+        TODO: change this now that you made the map OOP
+        :param datatype_to_percentage: keys consist of the values of ReberDataType, values are integer percentage points
+            representing what proportion of data generated will be of which datatype. See ReberDataType for type details
         """
-        all_percentage_types_but_valid = {
+        self._datatype_to_row_count = self._get_datatype_to_row_count(
+            m_total, datatype_to_percentage
+        )
+
+    def _get_datatype_to_row_count(
+        self, m_total: int, datatype_to_percentage: ReberDatatypeToPercentage
+    ) -> Dict[ReberDataType, int]:
+        """
+        :return: a map of {ReberDataType: number_of_rows_for_that_type}
+        """
+        all_datatypes_but_valid = {
             percentage_type
             for percentage_type in ReberDataType
             if percentage_type != ReberDataType.VALID
         }
-        remaining_rows = total_num_rows
+        remaining_rows = m_total
         row_counts = {}
-        for percentage_type in all_percentage_types_but_valid:
-            percentage = self._datatype_to_percentage[percentage_type.value]
-            num_rows_of_this_type = round(total_num_rows * percentage / 100)
-            row_counts[percentage_type.value] = num_rows_of_this_type
+        for datatype in all_datatypes_but_valid:
+            percentage = datatype_to_percentage.get(datatype)
+            num_rows_of_this_type = round(m_total * percentage / 100)
+            row_counts[datatype] = num_rows_of_this_type
             remaining_rows -= num_rows_of_this_type
         num_valid_rows = remaining_rows
-        row_counts[ReberDataType.VALID.value] = num_valid_rows
+        row_counts[ReberDataType.VALID] = num_valid_rows
 
-        assert total_num_rows == sum(row_counts.values())
+        assert m_total == sum(row_counts.values())
         return row_counts
+
+    def get_num_rows_of(self, datatype: ReberDataType):
+        return self._datatype_to_row_count[datatype]
 
 
 class ReberGenerator:
@@ -128,15 +144,14 @@ class ReberGenerator:
         """
         self.max_length = max_length
         self.num_perturbations = num_perturbations
+        # TODO: make sure this works now that I've made everything not a string
         self._datatype_to_make_str_fn = {
-            ReberDataType.VALID.value: self.make_valid_embedded_reber_string,
-            ReberDataType.PERTURBED.value: self.make_perturbed_embedded_reber_string,
-            ReberDataType.SYMMETRY_DISTURBED.value: self.make_symmetry_disturbed_reber_string,
-            ReberDataType.RANDOM.value: self.make_random,
+            ReberDataType.VALID: self.make_valid_embedded_reber_string,
+            ReberDataType.PERTURBED: self.make_perturbed_embedded_reber_string,
+            ReberDataType.SYMMETRY_DISTURBED: self.make_symmetry_disturbed_reber_string,
+            ReberDataType.RANDOM: self.make_random,
         }
-        assert set(self._datatype_to_make_str_fn.keys()) == set(
-            d.value for d in ReberDataType
-        )
+        assert set(self._datatype_to_make_str_fn) == set(e for e in ReberDataType)
         self._reber_graph = {
             0: [Edge(to=1, get_str_list=lambda: ["B"])],
             1: [
@@ -217,9 +232,6 @@ class ReberGenerator:
             perturb_fn = random.choice(possible_perturb_fns)
             perturb_fn(str_list)
 
-    def _encode_as_unpadded_ints(self, string) -> List[int]:
-        return [self._reber_letter_shifted_idx[char] for char in string]
-
     def _make_reber_str_list(self, is_embedded) -> List[str]:
         """
         :return list of chars that represent a reber string or an embedded reber string
@@ -275,6 +287,13 @@ class ReberGenerator:
         str_list[index_to_change] = "P" if str_list[index_to_change] == "T" else "T"
         return "".join(str_list)
 
+    def _create_rows_of_datatype(self, num_rows: int, datatype: ReberDataType):
+        make_str: Callable = self._datatype_to_make_str_fn[datatype]
+        return [
+            self.encode_as_padded_ints(string=make_str(), safe=False)
+            for _ in range(num_rows)
+        ]
+
     def make_data(self, m_total, **kwargs) -> Tuple[pd.DataFrame, pd.Series]:
         """
         :param m_total: total number of rows to generate
@@ -286,31 +305,15 @@ class ReberGenerator:
         """
         if m_total < 100:
             raise AssertionError(f"m_total must be at least 100; was only {m_total}")
-        datatype_to_percentage = {
-            k: v for k, v in kwargs.items() if k in ReberDataType.values()
-        }
-        metadata = ReberMetadata(**datatype_to_percentage)
-        datatype_to_row_count = metadata.get_datatype_to_row_count(m_total)
+        datatype_to_percentage = ReberDatatypeToPercentage.from_kwargs(**kwargs)
+        metadata = ReberMetadata(m_total, datatype_to_percentage)
         X_raw = []
         y_raw = []
-        for datatype_enum in ReberDataType:
-            datatype = datatype_enum.value
-            make_str: Callable = self._datatype_to_make_str_fn[datatype]
-            m = datatype_to_row_count[datatype]
-            X_raw.extend([self._encode_as_unpadded_ints(make_str()) for _ in range(m)])
-            class_label = datatype_enum.get_class_label()
-            y_raw.extend([class_label] * m)
-        # 0 is a dummy encoding for padding
-        X = pd.DataFrame(X_raw).fillna(value=0).astype("int64")
-        y = pd.Series(y_raw)
-        if X.shape[1] != self.max_length:
-            raise AssertionError(
-                "No strings were generated that reached max_length.\n"
-                f"Max length is {self.max_length}, only reached {X.shape[1]}.\n"
-                "Try setting a higher m_total or a lower max_length."
-            )
-        assert X.shape[0] == len(y)
-        return X, y
+        for datatype in ReberDataType:
+            num_rows = metadata.get_num_rows_of(datatype)
+            X_raw.extend(self._create_rows_of_datatype(num_rows, datatype))
+            y_raw.extend([datatype.get_class_label()] * num_rows)
+        return pd.DataFrame(X_raw).astype("int64"), pd.Series(y_raw)
 
     def encode_as_padded_ints(self, string, safe=True) -> List[int]:
         """
@@ -331,7 +334,8 @@ class ReberGenerator:
                 f"String is length {original_length}; must be at most {self.max_length}"
             )
         padding_length = self.max_length - original_length
-        return self._encode_as_unpadded_ints(string) + [0] * padding_length
+        unpadded_ints = [self._reber_letter_shifted_idx[char] for char in string]
+        return unpadded_ints + [PADDING_VALUE] * padding_length
 
 
 if __name__ == "__main__":
