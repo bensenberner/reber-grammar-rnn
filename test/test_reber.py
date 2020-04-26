@@ -1,12 +1,11 @@
-from copy import deepcopy
 from unittest import TestCase
 from unittest.mock import patch, Mock
 
 from reber import (
-    ReberGenerator,
+    DatatypeToRowCount,
     ReberDataType,
-    ReberMetadata,
     ReberDatatypeToPercentage,
+    ReberGenerator,
 )
 
 MAX_LENGTH = 15
@@ -35,7 +34,7 @@ class TestReberDatatypeToPercentage(TestCase):
             )
 
     def test_row_counts(self):
-        metadata = ReberMetadata(
+        metadata = DatatypeToRowCount(
             m_total=1000,
             datatype_to_percentage=ReberDatatypeToPercentage.from_kwargs(**{}),
         )

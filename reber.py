@@ -64,17 +64,10 @@ class ReberDatatypeToPercentage:
                 raise ValueError(f"Missing {datatype} percentage.")
 
 
-class ReberMetadata:
+class DatatypeToRowCount:
     def __init__(self, m_total: int, datatype_to_percentage: ReberDatatypeToPercentage):
-        self._datatype_to_row_count = self._get_datatype_to_row_count(
-            m_total, datatype_to_percentage
-        )
-
-    def _get_datatype_to_row_count(
-        self, m_total: int, datatype_to_percentage: ReberDatatypeToPercentage
-    ) -> Dict[ReberDataType, int]:
         """
-        :return: a map of {ReberDataType: number_of_rows_for_that_type}
+        a map of {ReberDataType: number_of_rows_for_that_type}
         """
         all_datatypes_but_valid = {
             percentage_type
@@ -82,20 +75,20 @@ class ReberMetadata:
             if percentage_type != ReberDataType.VALID
         }
         remaining_rows = m_total
-        row_counts = {}
+        datatype_to_row_count = {}
         for datatype in all_datatypes_but_valid:
             percentage = datatype_to_percentage.get(datatype)
             num_rows_of_this_type = round(m_total * percentage / 100)
-            row_counts[datatype] = num_rows_of_this_type
+            datatype_to_row_count[datatype] = num_rows_of_this_type
             remaining_rows -= num_rows_of_this_type
         num_valid_rows = remaining_rows
-        row_counts[ReberDataType.VALID] = num_valid_rows
+        datatype_to_row_count[ReberDataType.VALID] = num_valid_rows
 
-        assert m_total == sum(row_counts.values())
-        return row_counts
+        assert m_total == sum(datatype_to_row_count.values())
+        self.datatype_to_row_count = datatype_to_row_count
 
     def get_num_rows_of(self, datatype: ReberDataType):
-        return self._datatype_to_row_count[datatype]
+        return self.datatype_to_row_count[datatype]
 
 
 class ReberGenerator:
@@ -315,7 +308,7 @@ class ReberGenerator:
         if m_total < 100:
             raise AssertionError(f"m_total must be at least 100; was only {m_total}")
         datatype_to_percentage = ReberDatatypeToPercentage.from_kwargs(**kwargs)
-        metadata = ReberMetadata(m_total, datatype_to_percentage)
+        metadata = DatatypeToRowCount(m_total, datatype_to_percentage)
         X_raw = []
         y_raw = []
         for datatype in ReberDataType:
