@@ -23,7 +23,12 @@ class ReberDataType(Enum):
 
 
 class ReberDatatypeToPercentage:
-    def __init__(self, datatype_to_percentage=None):
+    """
+    Map of {ReberDataType: percentage} where percentage represents what proportion of data generated will be of that
+    datatype. see ReberDataType for type details
+    """
+
+    def __init__(self, datatype_to_percentage: Dict[ReberDataType, int]):
         if not datatype_to_percentage:
             datatype_to_percentage = {
                 ReberDataType.VALID: 50,
@@ -61,11 +66,6 @@ class ReberDatatypeToPercentage:
 
 class ReberMetadata:
     def __init__(self, m_total: int, datatype_to_percentage: ReberDatatypeToPercentage):
-        """
-        TODO: change this now that you made the map OOP
-        :param datatype_to_percentage: keys consist of the values of ReberDataType, values are integer percentage points
-            representing what proportion of data generated will be of which datatype. See ReberDataType for type details
-        """
         self._datatype_to_row_count = self._get_datatype_to_row_count(
             m_total, datatype_to_percentage
         )
@@ -144,7 +144,6 @@ class ReberGenerator:
         """
         self.max_length = max_length
         self.num_perturbations = num_perturbations
-        # TODO: make sure this works now that I've made everything not a string
         self._datatype_to_make_str_fn = {
             ReberDataType.VALID: self.make_valid_embedded_reber_string,
             ReberDataType.PERTURBED: self.make_perturbed_embedded_reber_string,
@@ -192,9 +191,10 @@ class ReberGenerator:
     def _make_reber_list(self) -> List[str]:
         return self._make_reber_str_list(is_embedded=False)
 
-    def _randomly_inplace_edit_str_list(self, str_list: List[str]) -> None:
-        random_index = random.randrange(0, len(str_list))
-        curr_letter = str_list[random_index]
+    def _randomly_inplace_edit_str_list(self, str_list: List[str]) -> List[str]:
+        new_str_list = str_list[:]
+        random_index = random.randrange(0, len(new_str_list))
+        curr_letter = new_str_list[random_index]
         # only replace with a letter that will yield invalid reber
         possible_replacement_letters = list(
             self._reber_letters_set
@@ -203,26 +203,32 @@ class ReberGenerator:
         )
         replacement_letter = random.choice(possible_replacement_letters)
 
-        str_list[random_index] = replacement_letter
+        new_str_list[random_index] = replacement_letter
+        return new_str_list
 
-    def _add_random_char_to_str_list(self, str_list: List[str]) -> None:
+    def _add_random_char_to_str_list(self, str_list: List[str]) -> List[str]:
         """
         Pick a random index and add that a random character before that index in the string to make the reber invalid
         TODO: explain why you're adding this (you tried adding a P at the end of a string and it was unable to determine
         that it wasn't invalid reber)
         """
-        # -1 here represents before the 0th index, rather than at the end.
-        random_index = random.randrange(-1, len(str_list))
-        curr_letter = str_list[random_index] if random_index >= 0 else ""
+        addition_idx = random.randrange(len(str_list) + 1)
+        # the empty string is the char before str_list[0]
+        letter_before_addition_idx = (
+            str_list[addition_idx - 1] if addition_idx > 0 else ""
+        )
         # only add letter that will yield invalid reber
         possible_letters_to_add = list(
-            self._reber_letters_set - self._reber_next_chars[curr_letter]
+            self._reber_letters_set - self._reber_next_chars[letter_before_addition_idx]
         )
         letter_to_add = random.choice(possible_letters_to_add)
 
-        str_list[random_index] = letter_to_add
+        new_list = str_list[:]
+        new_list.insert(addition_idx, letter_to_add)
+        return new_list
 
     def _perturb_str_list(self, str_list: List[str]) -> None:
+        # TODO: is it better to return new list or mutate old list? Faster? Easier to read?
         for _ in range(self.num_perturbations):
             possible_perturb_fns: List[Callable] = [
                 self._randomly_inplace_edit_str_list
@@ -230,7 +236,7 @@ class ReberGenerator:
             if len(str_list) < self.max_length:
                 possible_perturb_fns.append(self._add_random_char_to_str_list)
             perturb_fn = random.choice(possible_perturb_fns)
-            perturb_fn(str_list)
+            str_list[:] = perturb_fn(str_list)
 
     def _make_reber_str_list(self, is_embedded) -> List[str]:
         """
@@ -294,9 +300,12 @@ class ReberGenerator:
             for _ in range(num_rows)
         ]
 
-    def make_data(self, m_total, **kwargs) -> Tuple[pd.DataFrame, pd.Series]:
+    def make_data(
+        self, m_total: int, **kwargs: Dict[str, int]
+    ) -> Tuple[pd.DataFrame, pd.Series]:
         """
         :param m_total: total number of rows to generate
+        :param kwargs: maps ReberDataTypes (the strings of the names of the enums) to percentages
         :return: X, y where X is a (m_total, self.max_length) matrix of strings encoded as lists of ints,
              each int representing the index of a character in `self._reber_letters`, padded with 0s at
              the end of each row

@@ -1,3 +1,4 @@
+from copy import deepcopy
 from unittest import TestCase
 from unittest.mock import patch, Mock
 
@@ -35,7 +36,8 @@ class TestReberDatatypeToPercentage(TestCase):
 
     def test_row_counts(self):
         metadata = ReberMetadata(
-            m_total=1000, datatype_to_percentage=ReberDatatypeToPercentage(),
+            m_total=1000,
+            datatype_to_percentage=ReberDatatypeToPercentage.from_kwargs(**{}),
         )
         datatype_expected_row_counts = [
             (ReberDataType.VALID, 500),
@@ -91,9 +93,64 @@ class TestReberGenerator(TestCase):
 
         self.assertEqual("BTSSVXTE", actual)
 
-    def test_perturb_str_list(self):
+    @patch("reber.random.choice")
+    def test_perturb_str_list_do_not_add_chars_to_max_len_str(self, mock_choice):
+        reber = ReberGenerator(max_length=MAX_LENGTH, num_perturbations=1)
+        str_list = ["B"] * MAX_LENGTH
+
+        reber._perturb_str_list(str_list)
+
+        mock_choice.assert_called_once_with([reber._randomly_inplace_edit_str_list])
+
+    @patch("reber.random.choice")
+    def test_perturb_str_list_add_char_to_short_enough_str(self, mock_choice):
         # TODO: actually do this
-        reber = ReberGenerator(max_length=MAX_LENGTH, num_perturbations=2)
+        reber = ReberGenerator(max_length=MAX_LENGTH, num_perturbations=1)
+        str_list = ["B", "E"]
+        self.assertLess(len(str_list), MAX_LENGTH)
+
+        reber._perturb_str_list(str_list)
+
+        mock_choice.assert_called_once_with(
+            [reber._randomly_inplace_edit_str_list, reber._add_random_char_to_str_list]
+        )
+
+    @patch("random.choice")
+    @patch("random.randrange")
+    def test_add_random_char_to_beginning_of_list(self, mock_randrange, mock_choice):
+        r = ReberGenerator(MAX_LENGTH)
+        mock_randrange.return_value = 0
+        mock_choice.return_value = "X"
+        str_list = ["B", "V", "E"]
+
+        actual_str_list = r._add_random_char_to_str_list(str_list)
+
+        actual_possible_letters_to_add = mock_choice.mock_calls[0][1][0]
+        # if we randomly add to the beginning, we can't add a B but that's it
+        self.assertCountEqual(
+            ["P", "T", "E", "V", "X", "S"], actual_possible_letters_to_add
+        )
+        expected_str_list = ["X"] + str_list
+        self.assertEqual(expected_str_list, actual_str_list)
+
+    @patch("random.choice")
+    @patch("random.randrange")
+    def test_add_random_char_to_middle_of_list(self, mock_randrange, mock_choice):
+        r = ReberGenerator(MAX_LENGTH)
+        mock_randrange.return_value = 2
+        mock_choice.return_value = "X"
+        str_list = ["B", "V", "E"]
+
+        actual_str_list = r._add_random_char_to_str_list(str_list)
+        actual_possible_letters_to_add = mock_choice.mock_calls[0][1][0]
+        # if we add after a V, we can add anything except P or E
+        expected_possible_letters_to_add = ["B", "V", "X", "T", "S"]
+        self.assertCountEqual(
+            expected_possible_letters_to_add, actual_possible_letters_to_add
+        )
+
+        expected_str_list = ["B", "V", "X", "E"]
+        self.assertEqual(expected_str_list, actual_str_list)
 
     def test_randomly_inplace_edit_str_list(self):
         # TODO:
@@ -101,6 +158,16 @@ class TestReberGenerator(TestCase):
 
     def test_make_reber_str_list(self):
         pass
+
+    @patch("reber.random.choice")
+    def test_perturb_str_list(self, mock_choice):
+        reber = ReberGenerator(max_length=MAX_LENGTH, num_perturbations=2)
+        mock_choice.return_value = lambda sl: sl + ["W"]
+        str_list = ["B", "T", "E"]
+
+        reber._perturb_str_list(str_list)
+
+        self.assertEqual(["B", "T", "E", "W", "W"], str_list)
 
     # ------------------------- encode -------------
     def test_encode_as_padded_ints_invalid_chars(self):
