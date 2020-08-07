@@ -1,5 +1,6 @@
-autokeras
-keras
 numpy
+tensorflow==2.2.0
+autokeras
 pandas
 sklearn
+matplotlib
